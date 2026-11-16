@@ -19,10 +19,11 @@ const DEFAULT_CATEGORIES = {
 const DEFAULT_ACCOUNTS = ["BCA", "Mandiri", "Tunai", "QRIS"];
 
 const STORAGE_KEYS = {
-  CONFIG: "NBFinance_config_v2",
-  TRANSACTIONS: "NBFinance_tx_cache_v2",
-  CUSTOM_CATS: "NBFinance_custom_cats_v2",
-  CUSTOM_ACCS: "NBFinance_custom_accs_v2"
+  CONFIG: "dompetku_config_v3",
+  TRANSACTIONS: "dompetku_tx_cache_v3",
+  CUSTOM_CATS: "dompetku_custom_cats_v3",
+  CUSTOM_ACCS: "dompetku_custom_accs_v3",
+  BUDGETS: "dompetku_budgets_v3"
 };
 
 let state = {
@@ -30,13 +31,14 @@ let state = {
   transactions: [],
   customCategories: { pemasukan: [], pengeluaran: [] },
   customAccounts: [],
+  budgets: {}, // { "Makanan & Minuman": 2000000, ... }
   period: "month", // today | week | month | all | custom
-  selectedAccount: "all", // filter rekening aktif di Dashboard & Grafik
+  selectedAccount: "all",
   customStart: "",
   customEnd: "",
   activeTab: "dashboard",
   deleteTarget: null,
-  charts: { account: null, category: null, trend: null, compare: null }
+  charts: { budget: null, account: null, category: null, trend: null, compare: null }
 };
 
 // ============================================================================
@@ -83,6 +85,9 @@ function loadLocalState() {
 
     const customAccs = JSON.parse(localStorage.getItem(STORAGE_KEYS.CUSTOM_ACCS));
     if (Array.isArray(customAccs)) state.customAccounts = customAccs;
+
+    const savedBudgets = JSON.parse(localStorage.getItem(STORAGE_KEYS.BUDGETS));
+    if (savedBudgets && typeof savedBudgets === "object") state.budgets = savedBudgets;
   } catch (e) {
     console.warn("Cache lokal kosong:", e);
   }
@@ -93,6 +98,7 @@ function saveLocalState() {
   localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(state.transactions));
   localStorage.setItem(STORAGE_KEYS.CUSTOM_CATS, JSON.stringify(state.customCategories));
   localStorage.setItem(STORAGE_KEYS.CUSTOM_ACCS, JSON.stringify(state.customAccounts));
+  localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(state.budgets));
 }
 
 // ============================================================================
@@ -139,11 +145,27 @@ function bindEvents() {
     renderAll();
   });
 
-  // Auto-format Ribuan Rupiah saat mengetik nominal
+  // Auto-format Ribuan Rupiah + Live Budget Preview
   document.getElementById("txNominal").addEventListener("input", (e) => {
     const digits = e.target.value.replace(/[^\d]/g, "");
     e.target.value = digits ? Number(digits).toLocaleString("id-ID") : "";
+    updateModalBudgetPreview();
   });
+
+  document.getElementById("txKategori").addEventListener("change", updateModalBudgetPreview);
+  document.getElementById("txTanggal").addEventListener("change", updateModalBudgetPreview);
+
+  document.getElementById("budgetLimitInput").addEventListener("input", (e) => {
+    const digits = e.target.value.replace(/[^\d]/g, "");
+    e.target.value = digits ? Number(digits).toLocaleString("id-ID") : "";
+  });
+
+  document.getElementById("budgetCatSelect").addEventListener("change", (e) => {
+    const existingLimit = state.budgets[e.target.value] || 0;
+    document.getElementById("budgetLimitInput").value = existingLimit > 0 ? existingLimit.toLocaleString("id-ID") : "";
+  });
+
+  document.getElementById("btnSaveBudget").addEventListener("click", handleSaveBudget);
 
   // Search & Filter di Tab Riwayat
   document.getElementById("searchInput").addEventListener("input", renderHistory);
@@ -260,13 +282,17 @@ async function syncFromSheets(silent = false) {
       state.customAccounts = Array.from(mergedAcc);
     }
 
+    if (json.budgets && typeof json.budgets === "object") {
+      state.budgets = { ...state.budgets, ...json.budgets };
+    }
+
     saveLocalState();
     renderAll();
 
     const now = new Date();
     const jam = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
     document.getElementById("lastSyncText").textContent = `Tersinkron • ${jam}`;
-    if (!silent) showToast("Data & saldo rekening tersinkron!", "success");
+    if (!silent) showToast("Data, rekening & anggaran tersinkron!", "success");
   } catch (err) {
     document.getElementById("lastSyncText").textContent = "Mode offline / gagal sync";
     if (!silent) showToast("Gagal sync: " + err.message, "error");
@@ -290,7 +316,7 @@ async function postToSheets(bodyObj) {
 }
 
 // ============================================================================
-// MASTER DATA: REKENING & KATEGORI DINAMIS
+// MASTER DATA: REKENING, KATEGORI & ANGGARAN BULANAN
 // ============================================================================
 function getAllAccounts() {
   const fromTx = state.transactions.map((t) => t.rekening).filter(Boolean);
@@ -301,7 +327,7 @@ function getCategoriesForType(jenis) {
   const base = DEFAULT_CATEGORIES[jenis] || [];
   const custom = state.customCategories[jenis] || [];
   const fromHistory = state.transactions
-    .filter((t) => t.jenis === jenis)
+    .filter((t) => t.jenis === jenis && t.kategori !== "Transfer Antar Rekening")
     .map((t) => t.kategori);
   return Array.from(new Set([...base, ...custom, ...fromHistory]));
 }
@@ -331,12 +357,224 @@ async function addCustomCategory(jenis, name) {
 
   state.customCategories[jenis].push(name);
   saveLocalState();
-  renderCustomTags();
-  populateHistoryFilters();
+  renderAll();
   showToast(`Kategori "${name}" ditambahkan!`, "success");
 
   postToSheets({ action: "saveMeta", categories: state.customCategories }).catch(() => {});
   return name;
+}
+
+function openBudgetSetup(categoryName = "") {
+  switchTab("settings");
+  populateBudgetSettings();
+  if (categoryName) {
+    document.getElementById("budgetCatSelect").value = categoryName;
+    const lim = state.budgets[categoryName] || 0;
+    document.getElementById("budgetLimitInput").value = lim > 0 ? lim.toLocaleString("id-ID") : "";
+  }
+  setTimeout(() => {
+    document.getElementById("budgetSettingsCard").scrollIntoView({ behavior: "smooth" });
+    document.getElementById("budgetLimitInput").focus();
+  }, 100);
+}
+
+async function handleSaveBudget() {
+  const cat = document.getElementById("budgetCatSelect").value;
+  const limit = Number(document.getElementById("budgetLimitInput").value.replace(/[^\d]/g, "")) || 0;
+
+  if (!cat) return showToast("Pilih kategori pengeluaran terlebih dahulu.", "error");
+  if (limit <= 0) return showToast("Batas anggaran harus lebih dari Rp 0.", "error");
+
+  state.budgets[cat] = limit;
+  saveLocalState();
+  renderAll();
+  showToast(`Limit ${cat} disetel ke ${formatRupiah(limit)}/bulan!`, "success");
+
+  postToSheets({ action: "saveMeta", budgets: state.budgets }).catch(() => {});
+}
+
+async function deleteBudget(cat) {
+  delete state.budgets[cat];
+  saveLocalState();
+  renderAll();
+  showToast(`Batas anggaran "${cat}" dihapus.`, "success");
+
+  postToSheets({ action: "saveMeta", budgets: state.budgets }).catch(() => {});
+}
+
+function computeBudgetStatuses() {
+  const currentMonth = getTodayISO().slice(0, 7); // YYYY-MM bulan berjalan
+  const spentByCat = {};
+
+  state.transactions.forEach((tx) => {
+    if (
+      tx.jenis === "pengeluaran" &&
+      tx.kategori !== "Transfer Antar Rekening" &&
+      String(tx.tanggal).startsWith(currentMonth)
+    ) {
+      spentByCat[tx.kategori] = (spentByCat[tx.kategori] || 0) + tx.nominal;
+    }
+  });
+
+  const items = Object.entries(state.budgets)
+    .filter(([_, limit]) => Number(limit) > 0)
+    .map(([category, limit]) => {
+      const spent = spentByCat[category] || 0;
+      const pct = Math.round((spent / limit) * 100);
+      const remaining = limit - spent;
+      let status = "safe"; // safe | warning | exceeded
+      if (pct >= 100) status = "exceeded";
+      else if (pct >= 80) status = "warning";
+
+      return { category, limit: Number(limit), spent, pct, remaining, status };
+    })
+    .sort((a, b) => b.pct - a.pct);
+
+  return items;
+}
+
+function renderBudgetSections() {
+  const statuses = computeBudgetStatuses();
+
+  // 1. Banner Peringatan di Atas Dashboard (jika ada kategori >= 80%)
+  const alertBanner = document.getElementById("budgetAlertBanner");
+  const alertIconBox = document.getElementById("budgetAlertIconBox");
+  const alertTitle = document.getElementById("budgetAlertTitle");
+  const alertList = document.getElementById("budgetAlertList");
+
+  const risky = statuses.filter((s) => s.status === "warning" || s.status === "exceeded");
+  if (risky.length === 0) {
+    alertBanner.classList.add("hidden");
+  } else {
+    const hasExceeded = risky.some((s) => s.status === "exceeded");
+    alertBanner.className = hasExceeded
+      ? "rounded-2xl p-4 bg-rose-50/95 border border-rose-200 shadow-xs animate-fade-in"
+      : "rounded-2xl p-4 bg-amber-50/95 border border-amber-200 shadow-xs animate-fade-in";
+
+    alertIconBox.className = hasExceeded
+      ? "w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 mt-0.5"
+      : "w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5";
+
+    alertTitle.className = hasExceeded ? "text-xs font-extrabold text-rose-900" : "text-xs font-extrabold text-amber-900";
+    alertTitle.textContent = hasExceeded
+      ? "Perhatian: Pengeluaran Melebihi Batas Anggaran!"
+      : "Peringatan: Anggaran Mendekati Limit (≥ 80%)";
+
+    alertList.className = hasExceeded
+      ? "mt-1 space-y-1 text-[11px] text-rose-800 leading-snug"
+      : "mt-1 space-y-1 text-[11px] text-amber-800 leading-snug";
+
+    alertList.innerHTML = risky
+      .map((s) => {
+        if (s.status === "exceeded") {
+          return `<div>• <strong>${escapeHtml(s.category)}</strong> sudah terpakai <strong>${s.pct}%</strong> (lebih ${formatRupiah(Math.abs(s.remaining))})</div>`;
+        }
+        return `<div>• <strong>${escapeHtml(s.category)}</strong> terpakai <strong>${s.pct}%</strong> — sisa ${formatRupiah(s.remaining)}</div>`;
+      })
+      .join("");
+  }
+
+  // 2. Kartu Progress Bar Anggaran Bulan Ini di Dashboard
+  const summaryBadge = document.getElementById("budgetSummaryBadge");
+  const listEl = document.getElementById("budgetProgressList");
+
+  if (statuses.length === 0) {
+    summaryBadge.textContent = "Belum ada batas anggaran bulanan";
+    listEl.innerHTML = `
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <i data-lucide="shield-check" class="w-4 h-4"></i>
+          </div>
+          <p class="text-xs text-slate-500 leading-snug">Pasang target limit bulanan agar pengeluaran tiap kategori lebih terkontrol.</p>
+        </div>
+        <button type="button" onclick="openBudgetSetup()" class="px-3 py-2 rounded-xl bg-slate-900 text-white text-[11px] font-bold shrink-0">
+          Mulai
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  const totalBudget = statuses.reduce((sum, s) => sum + s.limit, 0);
+  const totalBudgetSpent = statuses.reduce((sum, s) => sum + s.spent, 0);
+  const overallPct = Math.round((totalBudgetSpent / totalBudget) * 100);
+  summaryBadge.textContent = `Terpakai ${formatRupiah(totalBudgetSpent)} dari ${formatRupiah(totalBudget)} (${overallPct}%)`;
+
+  listEl.innerHTML = statuses
+    .map((s) => {
+      const barWidth = Math.min(100, s.pct);
+      let barColor = "bg-gradient-to-r from-indigo-500 to-teal-500";
+      let pillClass = "bg-emerald-50 text-emerald-700";
+      let statusLabel = `Sisa ${formatRupiah(s.remaining)}`;
+
+      if (s.status === "warning") {
+        barColor = "bg-gradient-to-r from-amber-400 to-orange-500";
+        pillClass = "bg-amber-50 text-amber-700";
+        statusLabel = `Mendekati limit • Sisa ${formatRupiah(s.remaining)}`;
+      } else if (s.status === "exceeded") {
+        barColor = "bg-gradient-to-r from-rose-500 to-red-600";
+        pillClass = "bg-rose-50 text-rose-700";
+        statusLabel = `Over ${formatRupiah(Math.abs(s.remaining))}`;
+      }
+
+      return `
+        <div onclick="openBudgetSetup('${escapeHtml(s.category)}')" class="glass-card rounded-2xl p-4 cursor-pointer active:scale-[0.99] transition">
+          <div class="flex items-center justify-between gap-2 mb-1.5">
+            <span class="text-xs font-extrabold text-slate-800 truncate">${escapeHtml(s.category)}</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold ${pillClass} shrink-0">${s.pct}%</span>
+          </div>
+
+          <div class="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+            <div class="h-full rounded-full ${barColor} transition-all duration-500" style="width: ${barWidth}%"></div>
+          </div>
+
+          <div class="flex items-center justify-between mt-2 text-[11px]">
+            <span class="font-bold text-slate-700">${formatRupiah(s.spent)} <span class="font-normal text-slate-400">/ ${formatRupiah(s.limit)}</span></span>
+            <span class="font-semibold ${s.status === "exceeded" ? "text-rose-600" : s.status === "warning" ? "text-amber-600" : "text-teal-600"}">
+              ${statusLabel}
+            </span>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function populateBudgetSettings() {
+  const select = document.getElementById("budgetCatSelect");
+  const curVal = select.value;
+  const expCats = getCategoriesForType("pengeluaran");
+  select.innerHTML = expCats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  if (expCats.includes(curVal)) select.value = curVal;
+
+  const selectedCat = select.value;
+  const lim = state.budgets[selectedCat] || 0;
+  document.getElementById("budgetLimitInput").value = lim > 0 ? lim.toLocaleString("id-ID") : "";
+
+  const listContainer = document.getElementById("budgetSettingsList");
+  const statuses = computeBudgetStatuses();
+
+  if (statuses.length === 0) {
+    listContainer.innerHTML = `<p class="text-[11px] text-slate-400">Belum ada target anggaran yang disimpan.</p>`;
+    return;
+  }
+
+  listContainer.innerHTML = statuses
+    .map(
+      (s) => `
+      <div class="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+        <div onclick="openBudgetSetup('${escapeHtml(s.category)}')" class="cursor-pointer min-w-0 flex-1">
+          <p class="text-xs font-extrabold text-slate-800 truncate">${escapeHtml(s.category)}</p>
+          <p class="text-[11px] text-slate-500">Limit: <strong>${formatRupiah(s.limit)}</strong> / bulan (${s.pct}% terpakai)</p>
+        </div>
+        <button type="button" onclick="deleteBudget('${escapeHtml(s.category)}')" title="Hapus Limit"
+          class="w-8 h-8 rounded-lg bg-white text-slate-400 hover:text-rose-600 border border-slate-200 flex items-center justify-center shrink-0">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>`
+    )
+    .join("");
 }
 
 function renderCustomTags() {
@@ -382,7 +620,6 @@ function computeAccountBalances() {
     map[acc] = { name: acc, balance: 0, allIn: 0, allOut: 0, txCount: 0 };
   });
 
-  // Saldo masing-masing rekening dihitung dari SELURUH transaksi historis
   state.transactions.forEach((tx) => {
     const acc = tx.rekening || "Tunai";
     if (!map[acc]) {
@@ -403,11 +640,11 @@ function computeAccountBalances() {
 
 function getAccountBadgeStyle(accName) {
   const key = String(accName).toLowerCase();
-  if (key.includes("bca")) return { icon: "landmark", bg: "bg-blue-50 text-blue-600", border: "border-blue-200" };
-  if (key.includes("mandiri")) return { icon: "building-2", bg: "bg-amber-50 text-amber-600", border: "border-amber-200" };
-  if (key.includes("tunai") || key.includes("cash")) return { icon: "banknote", bg: "bg-emerald-50 text-emerald-600", border: "border-emerald-200" };
-  if (key.includes("qris")) return { icon: "qr-code", bg: "bg-purple-50 text-purple-600", border: "border-purple-200" };
-  return { icon: "credit-card", bg: "bg-teal-50 text-teal-600", border: "border-teal-200" };
+  if (key.includes("bca")) return { icon: "landmark", bg: "bg-blue-50 text-blue-600" };
+  if (key.includes("mandiri")) return { icon: "building-2", bg: "bg-amber-50 text-amber-600" };
+  if (key.includes("tunai") || key.includes("cash")) return { icon: "banknote", bg: "bg-emerald-50 text-emerald-600" };
+  if (key.includes("qris")) return { icon: "qr-code", bg: "bg-purple-50 text-purple-600" };
+  return { icon: "credit-card", bg: "bg-teal-50 text-teal-600" };
 }
 
 function toggleAccountFilter(accName) {
@@ -472,16 +709,19 @@ function getFilteredTransactions() {
 }
 
 // ============================================================================
-// RENDER DASHBOARD, KARTU SALDO REKENING, INSIGHT, RIWAYAT & GRAFIK
+// RENDER DASHBOARD, KARTU SALDO, ANGGARAN, INSIGHT, RIWAYAT & GRAFIK
 // ============================================================================
 function renderAll() {
   updatePeriodPills();
   renderAccountCards();
+  renderBudgetSections();
   renderDashboard();
   renderCharts();
   populateHistoryFilters();
   renderHistory();
+  populateBudgetSettings();
   renderCustomTags();
+  lucide.createIcons();
 }
 
 function updatePeriodPills() {
@@ -548,7 +788,6 @@ function renderDashboard() {
       totalIncome += tx.nominal;
     } else {
       totalExpense += tx.nominal;
-      // Jangan masukkan transfer antar rekening sebagai kategori belanja konsumtif di insight
       if (tx.kategori !== "Transfer Antar Rekening") {
         expenseByCategory[tx.kategori] = (expenseByCategory[tx.kategori] || 0) + tx.nominal;
       }
@@ -563,7 +802,6 @@ function renderDashboard() {
   document.getElementById("sumIncome").textContent = formatRupiah(totalIncome);
   document.getElementById("sumExpense").textContent = formatRupiah(totalExpense);
 
-  // 1. Insight Kategori Pengeluaran Terbesar
   const sortedCats = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1]);
   const nonTransferExp = sortedCats.reduce((sum, x) => sum + x[1], 0);
   if (sortedCats.length > 0 && nonTransferExp > 0) {
@@ -576,11 +814,9 @@ function renderDashboard() {
     document.getElementById("insightTopCatVal").textContent = "Rp 0 (0%)";
   }
 
-  // 2. Insight Rata-rata Pengeluaran Harian
   const avgDaily = nonTransferExp / Math.max(1, range.days);
   document.getElementById("insightDailyAvg").textContent = formatRupiah(avgDaily);
 
-  // 3. Insight Perbandingan vs Periode Sebelumnya
   const prevRange = getPreviousPeriodRange(state.period);
   const badge = document.getElementById("insightCompareBadge");
   const desc = document.getElementById("insightCompareText");
@@ -619,14 +855,12 @@ function renderDashboard() {
     }
   }
 
-  // Render 5 Transaksi Terbaru
   const recentContainer = document.getElementById("recentList");
   const recentItems = filtered.slice(0, 5);
   recentContainer.innerHTML =
     recentItems.length === 0
       ? renderEmptyState("Belum ada transaksi pada filter ini. Tekan tombol + di bawah untuk mencatat.")
       : recentItems.map((tx) => renderTransactionCard(tx)).join("");
-  lucide.createIcons();
 }
 
 function renderHistory() {
@@ -707,7 +941,6 @@ function renderEmptyState(message) {
 }
 
 function populateHistoryFilters() {
-  // Filter Rekening
   const accSelect = document.getElementById("filterAccount");
   const curAcc = accSelect.value;
   const allAccs = getAllAccounts();
@@ -716,7 +949,6 @@ function populateHistoryFilters() {
     allAccs.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
   if (allAccs.includes(curAcc)) accSelect.value = curAcc;
 
-  // Filter Kategori
   const typeVal = document.getElementById("filterType").value;
   const catSelect = document.getElementById("filterCategory");
   const curCat = catSelect.value;
@@ -738,6 +970,51 @@ function populateHistoryFilters() {
 function renderCharts() {
   const filtered = getFilteredTransactions();
   const palette = ["#4F46E5", "#0D9488", "#2563EB", "#F59E0B", "#EC4899", "#8B5CF6", "#10B981", "#F43F5E", "#64748B"];
+
+  // 0. Bar Chart Realisasi vs Batas Anggaran Bulanan
+  const budgetStats = computeBudgetStatuses();
+  const budgetWrapper = document.getElementById("chartBudgetWrapper");
+  const budgetEmpty = document.getElementById("chartBudgetEmpty");
+
+  if (state.charts.budget) state.charts.budget.destroy();
+  if (budgetStats.length === 0) {
+    budgetWrapper.classList.add("hidden");
+    budgetEmpty.classList.remove("hidden");
+  } else {
+    budgetWrapper.classList.remove("hidden");
+    budgetEmpty.classList.add("hidden");
+    state.charts.budget = new Chart(document.getElementById("chartBudget"), {
+      type: "bar",
+      data: {
+        labels: budgetStats.map((b) => b.category),
+        datasets: [
+          {
+            label: "Batas Anggaran",
+            data: budgetStats.map((b) => b.limit),
+            backgroundColor: "#CBD5E1",
+            borderRadius: 8
+          },
+          {
+            label: "Terpakai Bulan Ini",
+            data: budgetStats.map((b) => b.spent),
+            backgroundColor: budgetStats.map((b) =>
+              b.status === "exceeded" ? "#F43F5E" : b.status === "warning" ? "#F59E0B" : "#0D9488"
+            ),
+            borderRadius: 8
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } },
+        scales: {
+          y: { ticks: { font: { size: 10 }, callback: (v) => (v >= 1000 ? v / 1000 + "rb" : v) } },
+          x: { ticks: { font: { size: 10 } } }
+        }
+      }
+    });
+  }
 
   const accExpMap = {};
   const catExpMap = {};
@@ -901,7 +1178,7 @@ function renderCharts() {
 }
 
 // ============================================================================
-// MODAL INPUT, EDIT, TRANSFER & HAPUS TRANSAKSI
+// MODAL INPUT, EDIT, TRANSFER, PREVIEW LIMIT & HAPUS TRANSAKSI
 // ============================================================================
 function switchTab(tabName) {
   state.activeTab = tabName;
@@ -964,7 +1241,6 @@ function openTxModal() {
   document.getElementById("quickCatBox").classList.add("hidden");
   document.getElementById("quickAccBox").classList.add("hidden");
 
-  // Aktifkan kembali tab Transfer untuk transaksi baru
   document.getElementById("btnTypeTransfer").classList.remove("hidden");
   document.getElementById("typeSwitcherBox").className = "grid grid-cols-3 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4";
 
@@ -991,13 +1267,13 @@ function openEditTx(id) {
   document.getElementById("quickCatBox").classList.add("hidden");
   document.getElementById("quickAccBox").classList.add("hidden");
 
-  // Sembunyikan tab Transfer saat mengedit 1 baris transaksi
   document.getElementById("btnTypeTransfer").classList.add("hidden");
   document.getElementById("typeSwitcherBox").className = "grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4";
 
   renderAccountSelectorPills(tx.rekening || "Tunai");
   setTxType(tx.jenis);
   document.getElementById("txKategori").value = tx.kategori;
+  updateModalBudgetPreview();
   document.getElementById("txModal").classList.remove("hidden");
 }
 
@@ -1024,6 +1300,7 @@ function setTxType(jenis) {
     btnExp.className = "py-2.5 rounded-xl text-xs font-extrabold bg-white text-rose-600 shadow-xs transition";
   } else if (jenis === "pemasukan") {
     btnInc.className = "py-2.5 rounded-xl text-xs font-extrabold bg-white text-emerald-600 shadow-xs transition";
+    document.getElementById("modalBudgetPreview").classList.add("hidden");
   } else {
     btnTrf.className = "py-2.5 rounded-xl text-xs font-extrabold bg-white text-indigo-600 shadow-xs transition";
     populateTransferSelects();
@@ -1034,16 +1311,63 @@ function setTxType(jenis) {
   document.getElementById("txKategori").innerHTML = cats
     .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
     .join("");
+  updateModalBudgetPreview();
+}
+
+function updateModalBudgetPreview() {
+  const box = document.getElementById("modalBudgetPreview");
+  const jenis = document.getElementById("txJenis").value;
+  const kategori = document.getElementById("txKategori").value;
+  const limit = Number(state.budgets[kategori] || 0);
+
+  if (jenis !== "pengeluaran" || limit <= 0) {
+    box.classList.add("hidden");
+    return;
+  }
+
+  const editId = document.getElementById("txId").value.trim();
+  const inputNominal = Number(document.getElementById("txNominal").value.replace(/[^\d]/g, "")) || 0;
+  const txDate = document.getElementById("txTanggal").value || getTodayISO();
+  const txMonth = txDate.slice(0, 7);
+
+  // Hitung pengeluaran bulan transaksi pada kategori ini (kecuali item yang sedang diedit)
+  const currentSpent = state.transactions
+    .filter(
+      (t) =>
+        t.id !== editId &&
+        t.jenis === "pengeluaran" &&
+        t.kategori === kategori &&
+        String(t.tanggal).startsWith(txMonth)
+    )
+    .reduce((sum, t) => sum + t.nominal, 0);
+
+  const projectedSpent = currentSpent + inputNominal;
+  const projectedPct = Math.round((projectedSpent / limit) * 100);
+  const remaining = limit - projectedSpent;
+
+  box.classList.remove("hidden");
+  if (projectedPct >= 100) {
+    box.className = "mt-2 px-3.5 py-2.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-[11px] leading-snug";
+    box.innerHTML = `🚨 <strong>Melebihi Limit Anggaran (${projectedPct}%)!</strong> Total jadi ${formatRupiah(projectedSpent)} dari batas ${formatRupiah(limit)}.`;
+  } else if (projectedPct >= 80) {
+    box.className = "mt-2 px-3.5 py-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-[11px] leading-snug";
+    box.innerHTML = `⚠️ <strong>Mendekati Limit (${projectedPct}%):</strong> Sisa anggaran ${escapeHtml(kategori)} tinggal <strong>${formatRupiah(remaining)}</strong>.`;
+  } else {
+    box.className = "mt-2 px-3.5 py-2.5 rounded-xl border border-teal-200 bg-teal-50/70 text-teal-800 text-[11px] leading-snug";
+    box.innerHTML = `🛡️ <strong>Anggaran Aman (${projectedPct}%):</strong> Sisa limit bulan ini <strong>${formatRupiah(remaining)}</strong> dari ${formatRupiah(limit)}.`;
+  }
 }
 
 function addQuickNominal(amount) {
   const input = document.getElementById("txNominal");
   const current = Number(input.value.replace(/[^\d]/g, "")) || 0;
   input.value = (current + amount).toLocaleString("id-ID");
+  updateModalBudgetPreview();
 }
 
 function clearNominal() {
   document.getElementById("txNominal").value = "";
+  updateModalBudgetPreview();
 }
 
 function toggleQuickCat() {
@@ -1074,6 +1398,7 @@ async function saveQuickCat() {
   await addCustomCategory(jenis, name);
   setTxType(jenis);
   document.getElementById("txKategori").value = name;
+  updateModalBudgetPreview();
   input.value = "";
   document.getElementById("quickCatBox").classList.add("hidden");
 }
@@ -1119,12 +1444,20 @@ async function submitTransaction() {
         await postToSheets({ action: "update", oldJenis, transaction: txPayload });
         const idx = state.transactions.findIndex((t) => t.id === id);
         if (idx !== -1) state.transactions[idx] = txPayload;
-        showToast("Transaksi berhasil diperbarui!", "success");
       } else {
         const res = await postToSheets({ action: "add", transaction: txPayload });
         txPayload.id = res.id;
         state.transactions.unshift(txPayload);
-        showToast(`Tersimpan di akun ${rekening}!`, "success");
+      }
+
+      // Cek apakah pengeluaran baru saja menyentuh peringatan anggaran
+      const budgetStatus = computeBudgetStatuses().find((b) => b.category === kategori);
+      if (jenis === "pengeluaran" && budgetStatus && budgetStatus.status === "exceeded") {
+        showToast(`Tersimpan! ⚠️ Anggaran ${kategori} sudah ${budgetStatus.pct}% (melebihi limit).`, "error");
+      } else if (jenis === "pengeluaran" && budgetStatus && budgetStatus.status === "warning") {
+        showToast(`Tersimpan! ⚠️ Anggaran ${kategori} sudah ${budgetStatus.pct}% (sisa ${formatRupiah(budgetStatus.remaining)}).`, "error");
+      } else {
+        showToast(id ? "Transaksi berhasil diperbarui!" : `Tersimpan di akun ${rekening}!`, "success");
       }
     }
 
@@ -1207,7 +1540,8 @@ function escapeHtml(str) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 let toastTimer = null;
@@ -1221,5 +1555,5 @@ function showToast(msg, type = "success") {
   toast.classList.remove("hidden");
 
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.add("hidden"), 3200);
+  toastTimer = setTimeout(() => toast.classList.add("hidden"), 3800);
 }
