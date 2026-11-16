@@ -1,4 +1,4 @@
-const CACHE_NAME = "FinanceNB-pwa-v1";
+const CACHE_NAME = "financenb-pwa-v3";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -18,7 +18,6 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  // Jangan cache request ke Google Apps Script agar data selalu real-time
   if (event.request.url.includes("script.google.com")) {
     return;
   }
