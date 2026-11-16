@@ -1,7 +1,7 @@
 {
   "name": "Finance NB — Catatan Keuangan",
   "short_name": "Finance NB",
-  "description": "Aplikasi pencatat pemasukan dan pengeluaran pribadi terhubung ke Google Sheets",
+  "description": "Aplikasi Keuangan",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F8FAFC",
