@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="DompetKu" />
-  <title>Finance NB — Catatan Keuangan Pribadi</title>
+  <title>NB Finance — Catatan Keuangan Multi-Rekening</title>
 
   <link rel="manifest" href="manifest.json" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -43,7 +43,7 @@
       overscroll-behavior-y: contain;
     }
     .glass-card {
-      background: rgba(255, 255, 255, 0.86);
+      background: rgba(255, 255, 255, 0.88);
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       border: 1px solid rgba(226, 232, 240, 0.9);
@@ -141,6 +141,16 @@
         <button data-period="custom" class="period-pill px-3.5 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition bg-white text-slate-600 border border-slate-200">Custom</button>
       </div>
 
+      <!-- Banner Filter Rekening Aktif -->
+      <div id="accountFilterBanner" class="hidden mt-2.5 px-3.5 py-2 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-between animate-fade-in">
+        <span class="text-xs font-semibold text-indigo-800">
+          Menampilkan rekening: <strong id="activeAccountFilterName">BCA</strong>
+        </span>
+        <button id="btnClearAccountFilter" type="button" class="text-[11px] font-bold text-indigo-600 underline">
+          Semua Akun
+        </button>
+      </div>
+
       <!-- Panel Tanggal Custom -->
       <div id="customDateBox" class="hidden mt-3 glass-card rounded-2xl p-3.5 animate-fade-in">
         <div class="grid grid-cols-2 gap-2.5">
@@ -168,7 +178,7 @@
 
         <div class="relative z-10">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-medium text-indigo-100">Saldo Bersih</span>
+            <span id="heroBalanceLabel" class="text-xs font-medium text-indigo-100">Arus Kas Bersih</span>
             <span id="periodLabel" class="text-[11px] font-semibold bg-white/15 px-2.5 py-1 rounded-full backdrop-blur-sm">Bulan Ini</span>
           </div>
           <h2 id="sumBalance" class="text-3xl font-extrabold tracking-tight mt-1.5">Rp 0</h2>
@@ -190,6 +200,15 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- Rincian Saldo per Rekening / Metode Pembayaran -->
+      <section class="space-y-2.5">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Saldo per Rekening</h3>
+          <span id="totalAllAccountsText" class="text-[11px] font-bold text-indigo-600">Total: Rp 0</span>
+        </div>
+        <div id="accountCardsRow" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
       </section>
 
       <!-- Insight Cerdas -->
@@ -242,6 +261,15 @@
     <!-- ==================== TAB 2: VISUALISASI GRAFIK ==================== -->
     <section id="view-charts" class="hidden px-5 pt-4 space-y-4 animate-fade-in">
       <div class="glass-card rounded-3xl p-5">
+        <h3 class="text-sm font-extrabold text-slate-800">Pengeluaran per Rekening</h3>
+        <p class="text-xs text-slate-400 mb-4">Distribusi transaksi keluar berdasarkan metode pembayaran</p>
+        <div class="relative h-52 flex items-center justify-center">
+          <canvas id="chartAccount"></canvas>
+        </div>
+        <div id="accountChartLegend" class="mt-4 space-y-2"></div>
+      </div>
+
+      <div class="glass-card rounded-3xl p-5">
         <h3 class="text-sm font-extrabold text-slate-800">Pengeluaran per Kategori</h3>
         <p class="text-xs text-slate-400 mb-4">Proporsi belanja berdasarkan kategori terpilih</p>
         <div class="relative h-56 flex items-center justify-center">
@@ -272,16 +300,19 @@
       <div class="glass-card rounded-2xl p-3 space-y-2.5">
         <div class="relative">
           <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
-          <input id="searchInput" type="search" placeholder="Cari catatan atau kategori..."
+          <input id="searchInput" type="search" placeholder="Cari catatan, rekening, atau kategori..."
             class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white" />
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <select id="filterType" class="px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
+        <div class="grid grid-cols-3 gap-2">
+          <select id="filterType" class="px-2.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
             <option value="all">Semua Jenis</option>
-            <option value="pengeluaran">Pengeluaran</option>
-            <option value="pemasukan">Pemasukan</option>
+            <option value="pengeluaran">Keluar</option>
+            <option value="pemasukan">Masuk</option>
           </select>
-          <select id="filterCategory" class="px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
+          <select id="filterAccount" class="px-2.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
+            <option value="all">Semua Akun</option>
+          </select>
+          <select id="filterCategory" class="px-2.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
             <option value="all">Semua Kategori</option>
           </select>
         </div>
@@ -295,8 +326,24 @@
       <div id="historyList" class="space-y-2.5"></div>
     </section>
 
-    <!-- ==================== TAB 4: PENGATURAN & KATEGORI ==================== -->
+    <!-- ==================== TAB 4: PENGATURAN, REKENING & KATEGORI ==================== -->
     <section id="view-settings" class="hidden px-5 pt-4 space-y-4 animate-fade-in">
+      <!-- Kelola Rekening / Metode Pembayaran -->
+      <div class="glass-card rounded-3xl p-5 space-y-3.5">
+        <div>
+          <h3 class="text-sm font-extrabold text-slate-800">Tambah Rekening / Metode Bayar</h3>
+          <p class="text-xs text-slate-400">Default: BCA, Mandiri, Tunai, QRIS. Tambahkan akun lain di sini</p>
+        </div>
+        <div class="flex gap-2">
+          <input id="newAccInput" type="text" placeholder="Contoh: GoPay, OVO, BNI..."
+            class="flex-1 px-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <button id="btnAddAccSettings" type="button" class="px-4 py-3 rounded-xl accent-gradient text-white text-xs font-bold active:scale-95 transition">
+            Tambah
+          </button>
+        </div>
+        <div id="customAccList" class="flex flex-wrap gap-1.5 pt-1"></div>
+      </div>
+
       <!-- Kelola Kategori Kustom -->
       <div class="glass-card rounded-3xl p-5 space-y-3.5">
         <div>
@@ -352,7 +399,7 @@
         <span class="text-[10px] font-semibold mt-1">Grafik</span>
       </button>
 
-      <!-- Tombol Utama + Tambah Transaksi (Thumb-Friendly) -->
+      <!-- Tombol Utama + Tambah Transaksi -->
       <button type="button" onclick="openTxModal()" aria-label="Tambah Transaksi"
         class="-mt-7 w-15 h-15 p-4 rounded-2xl accent-gradient text-white shadow-xl shadow-indigo-500/35 flex items-center justify-center active:scale-90 transition">
         <i data-lucide="plus" class="w-7 h-7 stroke-[2.75]"></i>
@@ -370,7 +417,7 @@
     </nav>
   </div>
 
-  <!-- ==================== MODAL INPUT / EDIT TRANSAKSI (< 10 DETIK) ==================== -->
+  <!-- ==================== MODAL INPUT / EDIT / TRANSFER (< 10 DETIK) ==================== -->
   <div id="txModal" class="hidden fixed inset-0 z-40 flex items-end justify-center max-w-md mx-auto">
     <div id="txModalBackdrop" onclick="closeTxModal()" class="fixed inset-0 bg-slate-900/45 backdrop-blur-xs transition-opacity"></div>
 
@@ -387,16 +434,21 @@
       <input type="hidden" id="txId" />
       <input type="hidden" id="txOldJenis" />
       <input type="hidden" id="txJenis" value="pengeluaran" />
+      <input type="hidden" id="txRekening" value="BCA" />
 
-      <!-- Switcher Jenis Transaksi -->
-      <div class="grid grid-cols-2 gap-2 p-1.5 bg-slate-100 rounded-2xl mb-4">
+      <!-- Switcher Jenis Transaksi (Pengeluaran / Pemasukan / Transfer) -->
+      <div id="typeSwitcherBox" class="grid grid-cols-3 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4">
         <button id="btnTypeExpense" type="button" onclick="setTxType('pengeluaran')"
-          class="py-3 rounded-xl text-xs font-extrabold bg-white text-rose-600 shadow-xs transition">
+          class="py-2.5 rounded-xl text-xs font-extrabold bg-white text-rose-600 shadow-xs transition">
           Pengeluaran
         </button>
         <button id="btnTypeIncome" type="button" onclick="setTxType('pemasukan')"
-          class="py-3 rounded-xl text-xs font-extrabold text-slate-500 transition">
+          class="py-2.5 rounded-xl text-xs font-extrabold text-slate-500 transition">
           Pemasukan
+        </button>
+        <button id="btnTypeTransfer" type="button" onclick="setTxType('transfer')"
+          class="py-2.5 rounded-xl text-xs font-extrabold text-slate-500 transition">
+          Transfer
         </button>
       </div>
 
@@ -409,7 +461,6 @@
             <input id="txNominal" type="text" inputmode="numeric" placeholder="0"
               class="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border border-slate-200 text-2xl font-extrabold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white" />
           </div>
-          <!-- Chip Nominal Cepat -->
           <div class="flex gap-2 mt-2 overflow-x-auto no-scrollbar">
             <button type="button" onclick="addQuickNominal(10000)" class="px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold active:scale-95">+10rb</button>
             <button type="button" onclick="addQuickNominal(25000)" class="px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold active:scale-95">+25rb</button>
@@ -419,8 +470,39 @@
           </div>
         </div>
 
-        <!-- Kategori + Tambah Kategori Cepat -->
-        <div>
+        <!-- Pilihan Rekening / Metode Pembayaran (Untuk Pemasukan & Pengeluaran) -->
+        <div id="singleAccountSection">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rekening / Metode Bayar</label>
+            <button type="button" onclick="toggleQuickAcc()" class="text-[11px] font-bold text-indigo-600">
+              + Rekening Baru
+            </button>
+          </div>
+
+          <div id="quickAccBox" class="hidden flex gap-2 mb-2">
+            <input id="quickAccInput" type="text" placeholder="Ketik nama rekening..."
+              class="flex-1 px-3.5 py-2.5 rounded-xl bg-indigo-50/60 border border-indigo-200 text-xs font-medium" />
+            <button type="button" onclick="saveQuickAcc()"
+              class="px-3.5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold">Simpan</button>
+          </div>
+
+          <div id="txAccountPills" class="flex gap-2 overflow-x-auto no-scrollbar pb-1"></div>
+        </div>
+
+        <!-- Pilihan Sumber & Tujuan (Khusus Mode Transfer) -->
+        <div id="transferAccountSection" class="hidden grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Dari Rekening</label>
+            <select id="txFromAccount" class="w-full px-3.5 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800"></select>
+          </div>
+          <div>
+            <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ke Rekening</label>
+            <select id="txToAccount" class="w-full px-3.5 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800"></select>
+          </div>
+        </div>
+
+        <!-- Kategori (Sembunyi saat Mode Transfer) -->
+        <div id="categorySection">
           <div class="flex items-center justify-between mb-1">
             <label class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Kategori</label>
             <button id="btnQuickAddCat" type="button" onclick="toggleQuickCat()" class="text-[11px] font-bold text-indigo-600">
@@ -447,7 +529,7 @@
           </div>
           <div class="col-span-3">
             <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Catatan (Opsional)</label>
-            <input id="txCatatan" type="text" placeholder="Contoh: Makan siang..."
+            <input id="txCatatan" type="text" placeholder="Contoh: Kopi / Transfer..."
               class="w-full px-3.5 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
         </div>
