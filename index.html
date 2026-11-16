@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="DompetKu" />
-  <title>NB Finance — Catatan Keuangan Multi-Rekening</title>
+  <title>DompetKu — Catatan Keuangan & Anggaran</title>
 
   <link rel="manifest" href="manifest.json" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -171,6 +171,19 @@
 
     <!-- ==================== TAB 1: DASHBOARD ==================== -->
     <main id="view-dashboard" class="px-5 pt-4 space-y-5 animate-fade-in">
+      <!-- Banner Peringatan Anggaran (Otomatis muncul jika ada kategori >= 80% limit) -->
+      <section id="budgetAlertBanner" class="hidden rounded-2xl p-4 bg-amber-50/90 border border-amber-200 shadow-xs animate-fade-in">
+        <div class="flex items-start gap-3">
+          <div id="budgetAlertIconBox" class="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <h3 id="budgetAlertTitle" class="text-xs font-extrabold text-amber-900">Peringatan Batas Anggaran</h3>
+            <div id="budgetAlertList" class="mt-1 space-y-1 text-[11px] text-amber-800 leading-snug"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- Hero Balance Card -->
       <section class="hero-gradient rounded-3xl p-6 text-white shadow-xl shadow-indigo-500/20 relative overflow-hidden">
         <div class="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-white/10 blur-xl"></div>
@@ -206,9 +219,23 @@
       <section class="space-y-2.5">
         <div class="flex items-center justify-between px-1">
           <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Saldo per Rekening</h3>
-          <span id="totalAllAccountsText" class="text-[11px] font-bold text-indigo-600">Total: Rp 0</span>
+          <span id="totalAllAccountsText" class="text-[11px] font-bold text-indigo-600">Total Aset: Rp 0</span>
         </div>
         <div id="accountCardsRow" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
+      </section>
+
+      <!-- Target Anggaran Bulanan per Kategori (Progress Bar) -->
+      <section class="space-y-2.5">
+        <div class="flex items-center justify-between px-1">
+          <div>
+            <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Anggaran Bulan Ini</h3>
+            <p id="budgetSummaryBadge" class="text-[11px] font-semibold text-slate-500 mt-0.5">Belum ada batas anggaran</p>
+          </div>
+          <button type="button" onclick="openBudgetSetup()" class="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl active:scale-95 transition">
+            + Atur Limit
+          </button>
+        </div>
+        <div id="budgetProgressList" class="space-y-2.5"></div>
       </section>
 
       <!-- Insight Cerdas -->
@@ -260,6 +287,18 @@
 
     <!-- ==================== TAB 2: VISUALISASI GRAFIK ==================== -->
     <section id="view-charts" class="hidden px-5 pt-4 space-y-4 animate-fade-in">
+      <!-- Grafik Realisasi vs Target Anggaran Bulanan -->
+      <div id="chartBudgetCard" class="glass-card rounded-3xl p-5">
+        <h3 class="text-sm font-extrabold text-slate-800">Realisasi vs Batas Anggaran</h3>
+        <p class="text-xs text-slate-400 mb-4">Perbandingan pengeluaran bulan ini dengan limit kategori</p>
+        <div id="chartBudgetWrapper" class="relative h-56">
+          <canvas id="chartBudget"></canvas>
+        </div>
+        <p id="chartBudgetEmpty" class="hidden text-xs text-slate-400 text-center py-6">
+          Belum ada batas anggaran bulanan yang diatur.
+        </p>
+      </div>
+
       <div class="glass-card rounded-3xl p-5">
         <h3 class="text-sm font-extrabold text-slate-800">Pengeluaran per Rekening</h3>
         <p class="text-xs text-slate-400 mb-4">Distribusi transaksi keluar berdasarkan metode pembayaran</p>
@@ -326,8 +365,32 @@
       <div id="historyList" class="space-y-2.5"></div>
     </section>
 
-    <!-- ==================== TAB 4: PENGATURAN, REKENING & KATEGORI ==================== -->
+    <!-- ==================== TAB 4: PENGATURAN, ANGGARAN, REKENING & KATEGORI ==================== -->
     <section id="view-settings" class="hidden px-5 pt-4 space-y-4 animate-fade-in">
+      <!-- Kelola Batas Anggaran Bulanan per Kategori -->
+      <div id="budgetSettingsCard" class="glass-card rounded-3xl p-5 space-y-3.5">
+        <div>
+          <h3 class="text-sm font-extrabold text-slate-800">Target Anggaran Bulanan</h3>
+          <p class="text-xs text-slate-400">Tetapkan batas maksimal belanja bulanan per kategori pengeluaran</p>
+        </div>
+
+        <div class="space-y-2.5">
+          <select id="budgetCatSelect" class="w-full px-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700"></select>
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-extrabold text-slate-400">Rp</span>
+              <input id="budgetLimitInput" type="text" inputmode="numeric" placeholder="Contoh: 1.500.000"
+                class="w-full pl-9 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <button id="btnSaveBudget" type="button" class="px-4 py-3 rounded-xl accent-gradient text-white text-xs font-bold active:scale-95 transition shrink-0">
+              Simpan Limit
+            </button>
+          </div>
+        </div>
+
+        <div id="budgetSettingsList" class="space-y-2 pt-1"></div>
+      </div>
+
       <!-- Kelola Rekening / Metode Pembayaran -->
       <div class="glass-card rounded-3xl p-5 space-y-3.5">
         <div>
@@ -436,7 +499,7 @@
       <input type="hidden" id="txJenis" value="pengeluaran" />
       <input type="hidden" id="txRekening" value="BCA" />
 
-      <!-- Switcher Jenis Transaksi (Pengeluaran / Pemasukan / Transfer) -->
+      <!-- Switcher Jenis Transaksi -->
       <div id="typeSwitcherBox" class="grid grid-cols-3 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4">
         <button id="btnTypeExpense" type="button" onclick="setTxType('pengeluaran')"
           class="py-2.5 rounded-xl text-xs font-extrabold bg-white text-rose-600 shadow-xs transition">
@@ -470,7 +533,7 @@
           </div>
         </div>
 
-        <!-- Pilihan Rekening / Metode Pembayaran (Untuk Pemasukan & Pengeluaran) -->
+        <!-- Pilihan Rekening / Metode Pembayaran -->
         <div id="singleAccountSection">
           <div class="flex items-center justify-between mb-1.5">
             <label class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rekening / Metode Bayar</label>
@@ -501,7 +564,7 @@
           </div>
         </div>
 
-        <!-- Kategori (Sembunyi saat Mode Transfer) -->
+        <!-- Kategori + Simulasi Sisa Anggaran Real-Time -->
         <div id="categorySection">
           <div class="flex items-center justify-between mb-1">
             <label class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Kategori</label>
@@ -518,6 +581,9 @@
           </div>
 
           <select id="txKategori" class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"></select>
+
+          <!-- Indikator Status Anggaran Kategori Terpilih -->
+          <div id="modalBudgetPreview" class="hidden mt-2 px-3.5 py-2.5 rounded-xl border text-xs"></div>
         </div>
 
         <!-- Tanggal & Catatan -->
