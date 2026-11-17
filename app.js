@@ -19,11 +19,11 @@ const DEFAULT_CATEGORIES = {
 const DEFAULT_ACCOUNTS = ["BCA", "Mandiri", "Tunai", "QRIS"];
 
 const STORAGE_KEYS = {
-  CONFIG: "dompetku_config_v3",
-  TRANSACTIONS: "dompetku_tx_cache_v3",
-  CUSTOM_CATS: "dompetku_custom_cats_v3",
-  CUSTOM_ACCS: "dompetku_custom_accs_v3",
-  BUDGETS: "dompetku_budgets_v3"
+  CONFIG: "NBFinance_config_v3",
+  TRANSACTIONS: "NBFinance_tx_cache_v3",
+  CUSTOM_CATS: "NBFinance_custom_cats_v3",
+  CUSTOM_ACCS: "NBFinance_custom_accs_v3",
+  BUDGETS: "NBFinance_budgets_v3"
 };
 
 let state = {
