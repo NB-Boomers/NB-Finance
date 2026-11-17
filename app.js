@@ -228,17 +228,14 @@ function bindEvents() {
 // KONEKSI & SINKRONISASI GOOGLE SHEETS
 // ============================================================================
 async function handleInitialSetup() {
-  const url = document.getElementById("setupUrl").value.trim();
+  // Ambil URL langsung dari hardcode DEFAULT_API_URL di atas
+  const url = DEFAULT_API_URL; 
   const pin = document.getElementById("setupPin").value.trim();
   const errEl = document.getElementById("setupError");
   const btn = document.getElementById("btnSaveSetup");
 
   errEl.classList.add("hidden");
-  if (!url.startsWith("https://script.google.com/")) {
-    errEl.textContent = "URL harus diawali https://script.google.com/...";
-    errEl.classList.remove("hidden");
-    return;
-  }
+  
   if (!pin) {
     errEl.textContent = "PIN rahasia wajib diisi.";
     errEl.classList.remove("hidden");
@@ -271,7 +268,6 @@ async function handleInitialSetup() {
     btn.innerHTML = `<span>Hubungkan & Mulai</span>`;
   }
 }
-
 async function syncFromSheets(silent = false) {
   const icon = document.getElementById("syncIcon");
   icon.classList.add("animate-spin");
