@@ -1,6 +1,6 @@
 {
-  "name": "NB Finance — Catatan Keuangan",
-  "short_name": "NBFinance",
+  "name": "Dompetku — Catatan Keuangan",
+  "short_name": "Dompetku",
   "description": "Aplikasi pencatat pemasukan, pengeluaran",
   "start_url": "./index.html",
   "display": "standalone",
