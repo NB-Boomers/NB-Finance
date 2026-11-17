@@ -1,4 +1,4 @@
-const CACHE_NAME = "NBFinance-pwa-v4";
+const CACHE_NAME = "dompetku-pwa-v5";
 const ASSETS = ["./", "./index.html", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
