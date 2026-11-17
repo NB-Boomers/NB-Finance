@@ -1,7 +1,7 @@
 {
-  "name": "Finance NB — Catatan Keuangan",
-  "short_name": "Finance NB",
-  "description": "Aplikasi Keuangan",
+  "name": "NB Finance — Catatan Keuangan",
+  "short_name": "NBFinance",
+  "description": "Aplikasi pencatat pemasukan, pengeluaran",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F8FAFC",
