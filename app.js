@@ -19,11 +19,12 @@ const DEFAULT_CATEGORIES = {
 const DEFAULT_ACCOUNTS = ["BCA", "Mandiri", "Tunai", "QRIS"];
 
 const STORAGE_KEYS = {
-  CONFIG: "NBFinance_config_v3",
-  TRANSACTIONS: "NBFinance_tx_cache_v3",
-  CUSTOM_CATS: "NBFinance_custom_cats_v3",
-  CUSTOM_ACCS: "NBFinance_custom_accs_v3",
-  BUDGETS: "NBFinance_budgets_v3"
+  CONFIG: "dompetku_config_v3",
+  TRANSACTIONS: "dompetku_tx_cache_v3",
+  CUSTOM_CATS: "dompetku_custom_cats_v3",
+  CUSTOM_ACCS: "dompetku_custom_accs_v3",
+  BUDGETS: "dompetku_budgets_v3",
+  HAS_AI_KEY: "dompetku_has_ai_key_v5"
 };
 
 let state = {
@@ -32,6 +33,7 @@ let state = {
   customCategories: { pemasukan: [], pengeluaran: [] },
   customAccounts: [],
   budgets: {},
+  hasGeminiKey: false,
   period: "month",
   selectedAccount: "all",
   customStart: "",
@@ -50,21 +52,8 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   registerServiceWorker();
 
-  // SETTING URL WEB APP SECARA PERMANEN (HARDCODE) DI SINI
-  const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbxSA5WqLpFtYbW7gXo6kVggejaQCdeL5e3MidlsTxYdvCc6KzhAkyC37RFYgpNk7kxEfA/exec"; 
-
-  // Jika URL di state kosong, otomatis isi dengan URL permanen di atas
-  if (!state.config.apiUrl) {
-    state.config.apiUrl = DEFAULT_API_URL;
-    saveLocalState();
-  }
-
-  // Jika PIN belum ada, tampilkan layar setup (hanya butuh PIN karena URL sudah terisi)
-  if (!state.config.pin) {
+  if (!state.config.apiUrl || !state.config.pin) {
     document.getElementById("setupScreen").classList.remove("hidden");
-    // Sembunyikan input URL di layar setup agar pengguna hanya melihat kolom PIN saja
-    const urlInputGroup = document.getElementById("setupUrl").closest("div");
-    if (urlInputGroup) urlInputGroup.classList.add("hidden");
   } else {
     document.getElementById("appContainer").classList.remove("hidden");
     document.getElementById("setUrl").value = state.config.apiUrl;
@@ -101,6 +90,8 @@ function loadLocalState() {
 
     const savedBudgets = JSON.parse(localStorage.getItem(STORAGE_KEYS.BUDGETS));
     if (savedBudgets && typeof savedBudgets === "object") state.budgets = savedBudgets;
+
+    state.hasGeminiKey = localStorage.getItem(STORAGE_KEYS.HAS_AI_KEY) === "true";
   } catch (e) {
     console.warn("Cache lokal kosong:", e);
   }
@@ -112,6 +103,7 @@ function saveLocalState() {
   localStorage.setItem(STORAGE_KEYS.CUSTOM_CATS, JSON.stringify(state.customCategories));
   localStorage.setItem(STORAGE_KEYS.CUSTOM_ACCS, JSON.stringify(state.customAccounts));
   localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(state.budgets));
+  localStorage.setItem(STORAGE_KEYS.HAS_AI_KEY, String(state.hasGeminiKey));
 }
 
 // ============================================================================
@@ -120,6 +112,13 @@ function saveLocalState() {
 function bindEvents() {
   document.getElementById("btnSaveSetup").addEventListener("click", handleInitialSetup);
   document.getElementById("btnSync").addEventListener("click", () => syncFromSheets(false));
+
+  // File Pickers untuk AI Receipt Scanner
+  document.getElementById("receiptCameraInput").addEventListener("change", handleReceiptFileSelected);
+  document.getElementById("receiptGalleryInput").addEventListener("change", handleReceiptFileSelected);
+
+  // Simpan Gemini API Key di Pengaturan
+  document.getElementById("btnSaveGeminiKey").addEventListener("click", handleSaveGeminiKey);
 
   // Filter Periode
   document.querySelectorAll(".period-pill").forEach((btn) => {
@@ -228,14 +227,17 @@ function bindEvents() {
 // KONEKSI & SINKRONISASI GOOGLE SHEETS
 // ============================================================================
 async function handleInitialSetup() {
-  // Ambil URL langsung dari hardcode DEFAULT_API_URL di atas
-  const url = DEFAULT_API_URL; 
+  const url = document.getElementById("setupUrl").value.trim();
   const pin = document.getElementById("setupPin").value.trim();
   const errEl = document.getElementById("setupError");
   const btn = document.getElementById("btnSaveSetup");
 
   errEl.classList.add("hidden");
-  
+  if (!url.startsWith("[https://script.google.com/](https://script.google.com/)")) {
+    errEl.textContent = "URL harus diawali [https://script.google.com/](https://script.google.com/)...";
+    errEl.classList.remove("hidden");
+    return;
+  }
   if (!pin) {
     errEl.textContent = "PIN rahasia wajib diisi.";
     errEl.classList.remove("hidden");
@@ -268,6 +270,7 @@ async function handleInitialSetup() {
     btn.innerHTML = `<span>Hubungkan & Mulai</span>`;
   }
 }
+
 async function syncFromSheets(silent = false) {
   const icon = document.getElementById("syncIcon");
   icon.classList.add("animate-spin");
@@ -299,6 +302,10 @@ async function syncFromSheets(silent = false) {
       state.budgets = { ...state.budgets, ...json.budgets };
     }
 
+    if (typeof json.hasGeminiKey === "boolean") {
+      state.hasGeminiKey = json.hasGeminiKey;
+    }
+
     saveLocalState();
     renderAll();
 
@@ -326,6 +333,183 @@ async function postToSheets(bodyObj) {
     throw new Error(json.message || "Gagal menyimpan ke spreadsheet.");
   }
   return json;
+}
+
+// ============================================================================
+// AI RECEIPT & SCREENSHOT SCANNER (KOMPRESI GAMBAR + GEMINI VISION)
+// ============================================================================
+function renderAiKeyStatus() {
+  const badge = document.getElementById("aiKeyStatusBadge");
+  if (!badge) return;
+  if (state.hasGeminiKey) {
+    badge.className = "px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 shrink-0";
+    badge.textContent = "Aktif di Server";
+  } else {
+    badge.className = "px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 shrink-0";
+    badge.textContent = "Belum Diatur";
+  }
+}
+
+async function handleSaveGeminiKey() {
+  const input = document.getElementById("geminiApiKeyInput");
+  const key = input.value.trim();
+  const btn = document.getElementById("btnSaveGeminiKey");
+
+  if (!key) {
+    return showToast("Masukkan Gemini API Key terlebih dahulu.", "error");
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Menyimpan...";
+
+  try {
+    await postToSheets({ action: "saveMeta", geminiApiKey: key });
+    state.hasGeminiKey = true;
+    saveLocalState();
+    renderAiKeyStatus();
+    input.value = "";
+    showToast("Gemini API Key tersimpan aman di server!", "success");
+  } catch (err) {
+    showToast("Gagal menyimpan API Key: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Simpan Key";
+  }
+}
+
+function openTxModalWithScan() {
+  openTxModal();
+  setTimeout(() => {
+    triggerReceiptPicker("gallery");
+  }, 180);
+}
+
+function triggerReceiptPicker(source) {
+  if (!state.hasGeminiKey) {
+    closeTxModal();
+    switchTab("settings");
+    setTimeout(() => {
+      document.getElementById("aiSettingsCard").scrollIntoView({ behavior: "smooth" });
+      document.getElementById("geminiApiKeyInput").focus();
+    }, 100);
+    showToast("Isi Gemini API Key dulu di tab Atur untuk mengaktifkan Scan AI.", "error");
+    return;
+  }
+
+  const inputId = source === "camera" ? "receiptCameraInput" : "receiptGalleryInput";
+  const inputEl = document.getElementById(inputId);
+  inputEl.value = "";
+  inputEl.click();
+}
+
+function compressImageFile(file, maxDimension = 1024, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const base64 = dataUrl.split(",")[1];
+        resolve({ dataUrl, base64, mimeType: "image/jpeg" });
+      };
+      img.onerror = () => reject(new Error("Gagal memproses file gambar."));
+      img.src = event.target.result;
+    };
+    reader.onerror = () => reject(new Error("Gagal membaca file dari perangkat."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleReceiptFileSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const previewBox = document.getElementById("aiScanPreviewBox");
+  const thumbImg = document.getElementById("aiScanThumb");
+  const statusText = document.getElementById("aiScanStatusText");
+  const subText = document.getElementById("aiScanSubText");
+  const spinner = document.getElementById("aiScanSpinner");
+  const submitBtn = document.getElementById("btnSubmitTx");
+
+  previewBox.classList.remove("hidden");
+  spinner.classList.remove("hidden");
+  statusText.className = "text-xs font-extrabold text-indigo-900 truncate";
+  statusText.textContent = "Mengompresi & membaca struk...";
+  subText.textContent = "AI mengekstrak nominal, kategori & tanggal";
+  submitBtn.disabled = true;
+
+  try {
+    const compressed = await compressImageFile(file, 1024, 0.78);
+    thumbImg.src = compressed.dataUrl;
+
+    const payload = {
+      action: "scanReceipt",
+      imageBase64: compressed.base64,
+      mimeType: compressed.mimeType,
+      categories: {
+        pemasukan: getCategoriesForType("pemasukan"),
+        pengeluaran: getCategoriesForType("pengeluaran")
+      },
+      accounts: getAllAccounts()
+    };
+
+    const res = await postToSheets(payload);
+    const ext = res.extracted;
+
+    // Terapkan hasil pembacaan AI ke form transaksi
+    setTxType(ext.jenis || "pengeluaran");
+
+    if (ext.nominal > 0) {
+      document.getElementById("txNominal").value = Number(ext.nominal).toLocaleString("id-ID");
+    }
+    if (ext.kategori) {
+      document.getElementById("txKategori").value = ext.kategori;
+    }
+    if (ext.rekening) {
+      renderAccountSelectorPills(ext.rekening);
+    }
+    if (ext.tanggal) {
+      document.getElementById("txTanggal").value = ext.tanggal;
+    }
+    if (ext.catatan) {
+      document.getElementById("txCatatan").value = ext.catatan;
+    }
+
+    updateModalBudgetPreview();
+
+    spinner.classList.add("hidden");
+    statusText.className = "text-xs font-extrabold text-emerald-700 truncate";
+    statusText.textContent = `✅ Terbaca: ${formatRupiah(ext.nominal)} (${ext.kategori})`;
+    subText.textContent = ext.catatan || "Periksa hasil di bawah lalu tekan Simpan";
+    showToast("Struk berhasil dibaca AI! Periksa lalu simpan.", "success");
+  } catch (err) {
+    spinner.classList.add("hidden");
+    statusText.className = "text-xs font-extrabold text-rose-600 truncate";
+    statusText.textContent = "⚠️ Gagal membaca gambar";
+    subText.textContent = err.message;
+    showToast("Scan gagal: " + err.message, "error");
+  } finally {
+    submitBtn.disabled = false;
+  }
 }
 
 // ============================================================================
@@ -650,7 +834,6 @@ function buildMonthlyReportData() {
   const monthStr = document.getElementById("reportMonthInput").value || getTodayISO().slice(0, 7);
   const accFilter = document.getElementById("reportAccountSelect").value || "all";
 
-  // Hitung bulan sebelumnya untuk perbandingan
   const [y, m] = monthStr.split("-").map(Number);
   const prevDate = new Date(y, m - 2, 1);
   const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
@@ -685,7 +868,6 @@ function buildMonthlyReportData() {
   const netCashflow = totalIncome - totalExpense;
   const savingsRate = totalIncome > 0 ? Math.round((netCashflow / totalIncome) * 100) : 0;
 
-  // Perbandingan pengeluaran bulan lalu
   const prevExpense = state.transactions
     .filter((t) => {
       const matchMonth = String(t.tanggal).startsWith(prevMonthStr);
@@ -893,7 +1075,7 @@ function generateWhatsAppMessage(data) {
 function shareReportWhatsApp() {
   const data = buildMonthlyReportData();
   const text = generateWhatsAppMessage(data);
-  const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const waUrl = `[https://wa.me/?text=$](https://wa.me/?text=$){encodeURIComponent(text)}`;
   window.open(waUrl, "_blank", "noopener,noreferrer");
 }
 
@@ -918,10 +1100,7 @@ function printReportPDF() {
       ? `<tr><td colspan="4" style="padding:10px;text-align:center;color:#64748B;">Tidak ada pengeluaran pada bulan ini.</td></tr>`
       : data.expenseCategories
           .map((c) => {
-            const budgetInfo =
-              c.limit > 0
-                ? `${formatRupiah(c.limit)} (${c.budgetPct}%)`
-                : "-";
+            const budgetInfo = c.limit > 0 ? `${formatRupiah(c.limit)} (${c.budgetPct}%)` : "-";
             return `
               <tr style="border-bottom:1px solid #E2E8F0;">
                 <td style="padding:8px 10px;font-weight:600;">${escapeHtml(c.cat)}</td>
@@ -988,7 +1167,6 @@ function printReportPDF() {
 
   printArea.innerHTML = `
     <div style="font-family:'Plus Jakarta Sans',sans-serif;color:#0F172A;">
-      <!-- Kop Laporan -->
       <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #4F46E5;padding-bottom:12px;margin-bottom:18px;">
         <div>
           <div style="font-size:11px;font-weight:800;letter-spacing:0.08em;color:#4F46E5;text-transform:uppercase;">DompetKu Personal Finance</div>
@@ -1001,7 +1179,6 @@ function printReportPDF() {
         </div>
       </div>
 
-      <!-- Ringkasan 3 Kotak -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
         <div style="border:1px solid #CBD5E1;border-radius:10px;padding:12px;background:#F8FAFC;">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#64748B;">Total Pemasukan</div>
@@ -1017,7 +1194,6 @@ function printReportPDF() {
         </div>
       </div>
 
-      <!-- Tabel Pengeluaran per Kategori -->
       <h3 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#334155;margin-bottom:8px;">
         Ringkasan Pengeluaran per Kategori
       </h3>
@@ -1033,7 +1209,6 @@ function printReportPDF() {
         <tbody>${expRows}</tbody>
       </table>
 
-      <!-- Tabel Posisi Saldo Rekening -->
       <h3 style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:#334155;margin-bottom:8px;">
         Posisi Saldo Akhir per Rekening (Total Aset: ${formatRupiah(data.totalAssets)})
       </h3>
@@ -1169,6 +1344,7 @@ function renderAll() {
   renderHistory();
   populateBudgetSettings();
   renderCustomTags();
+  renderAiKeyStatus();
   lucide.createIcons();
 }
 
@@ -1684,6 +1860,10 @@ function openTxModal() {
   document.getElementById("quickCatBox").classList.add("hidden");
   document.getElementById("quickAccBox").classList.add("hidden");
 
+  // Reset AI Scanner preview box & tampilkan banner scanner
+  document.getElementById("aiScannerBox").classList.remove("hidden");
+  document.getElementById("aiScanPreviewBox").classList.add("hidden");
+
   document.getElementById("btnTypeTransfer").classList.remove("hidden");
   document.getElementById("typeSwitcherBox").className = "grid grid-cols-3 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4";
 
@@ -1693,7 +1873,7 @@ function openTxModal() {
   setTxType("pengeluaran");
 
   document.getElementById("txModal").classList.remove("hidden");
-  setTimeout(() => document.getElementById("txNominal").focus(), 120);
+  lucide.createIcons();
 }
 
 function openEditTx(id) {
@@ -1709,6 +1889,7 @@ function openEditTx(id) {
   document.getElementById("txCatatan").value = tx.catatan || "";
   document.getElementById("quickCatBox").classList.add("hidden");
   document.getElementById("quickAccBox").classList.add("hidden");
+  document.getElementById("aiScannerBox").classList.add("hidden");
 
   document.getElementById("btnTypeTransfer").classList.add("hidden");
   document.getElementById("typeSwitcherBox").className = "grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-2xl mb-4";
