@@ -50,8 +50,21 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   registerServiceWorker();
 
-  if (!state.config.apiUrl || !state.config.pin) {
+  // SETTING URL WEB APP SECARA PERMANEN (HARDCODE) DI SINI
+  const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbxSA5WqLpFtYbW7gXo6kVggejaQCdeL5e3MidlsTxYdvCc6KzhAkyC37RFYgpNk7kxEfA/exec"; 
+
+  // Jika URL di state kosong, otomatis isi dengan URL permanen di atas
+  if (!state.config.apiUrl) {
+    state.config.apiUrl = DEFAULT_API_URL;
+    saveLocalState();
+  }
+
+  // Jika PIN belum ada, tampilkan layar setup (hanya butuh PIN karena URL sudah terisi)
+  if (!state.config.pin) {
     document.getElementById("setupScreen").classList.remove("hidden");
+    // Sembunyikan input URL di layar setup agar pengguna hanya melihat kolom PIN saja
+    const urlInputGroup = document.getElementById("setupUrl").closest("div");
+    if (urlInputGroup) urlInputGroup.classList.add("hidden");
   } else {
     document.getElementById("appContainer").classList.remove("hidden");
     document.getElementById("setUrl").value = state.config.apiUrl;
