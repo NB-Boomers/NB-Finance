@@ -1,7 +1,7 @@
 {
-  "name": "Dompetku — Catatan Keuangan",
-  "short_name": "Dompetku",
-  "description": "Aplikasi pencatat pemasukan, pengeluaran",
+  "name": "DompetKu — Catatan Keuangan",
+  "short_name": "DompetKu",
+  "description": "Aplikasi pencatat pemasukan, pengeluaran, saldo per rekening, anggaran bulanan, dan laporan WA/PDF",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F8FAFC",
